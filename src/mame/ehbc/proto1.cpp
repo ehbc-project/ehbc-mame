@@ -105,8 +105,8 @@ void proto1_state::mem_map(address_map &map)
 
 	// mmio
 	map(0xFF000000, 0xFF0000FF);  // for chipset
-	map(0xFF000100, 0xFF00011F).rw(m_mfp[0], FUNC(mc68901_device::read), FUNC(mc68901_device::write));
-	map(0xFF000120, 0xFF00013F).rw(m_mfp[1], FUNC(mc68901_device::read), FUNC(mc68901_device::write));
+	map(0xFF000100, 0xFF00010F).rw(m_mfp[0], FUNC(mc68901_device::read), FUNC(mc68901_device::write));
+	map(0xFF000110, 0xFF00011F).rw(m_mfp[1], FUNC(mc68901_device::read), FUNC(mc68901_device::write));
 	map(0xFF000200, 0xFF00020F).rw(m_duart, FUNC(mc68681_device::read), FUNC(mc68681_device::write));
 	map(0xFF000300, 0xFF0003FF);  // mc68440 #0
 	map(0xFF000400, 0xFF0004FF);  // mc68440 #1
