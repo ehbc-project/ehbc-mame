@@ -3,21 +3,6 @@
 
 [![Join the chat at https://gitter.im/mamedev/mame](https://badges.gitter.im/Join%20Chat.svg)](https://gitter.im/mamedev/mame?utm_source=badge&utm_medium=badge&utm_campaign=pr-badge&utm_content=badge)
 
-Continuous integration build status:
-
-| OS/Compiler                 | Status        |
-| --------------------------- |:-------------:|
-| Linux/clang and GCC         | ![CI (Linux)](https://github.com/mamedev/mame/workflows/CI%20(Linux)/badge.svg) |
-| Windows/MinGW GCC and clang | ![CI (Windows)](https://github.com/mamedev/mame/workflows/CI%20(Windows)/badge.svg) |
-| macOS/clang                 | ![CI (macOS)](https://github.com/mamedev/mame/workflows/CI%20(macOS)/badge.svg) |
-| UI Translations             | ![Compile UI translations](https://github.com/mamedev/mame/workflows/Compile%20UI%20translations/badge.svg) |
-| Documentation               | ![Build documentation](https://github.com/mamedev/mame/workflows/Build%20documentation/badge.svg) |
-| BGFX Shaders                | ![Rebuild BGFX shaders](https://github.com/mamedev/mame/workflows/Rebuild%20BGFX%20shaders/badge.svg) |
-
-Static analysis status for entire build (except for third-party parts of project):
-
-[![Coverity Scan Status](https://scan.coverity.com/projects/5727/badge.svg?flat=1)](https://scan.coverity.com/projects/mame-emulator)
-
 What is MAME?
 =============
 
@@ -31,13 +16,7 @@ How to compile?
 If you're on a UNIX-like system (including Linux and macOS), it could be as easy as typing
 
 ```
-make
-```
-
-for a full build,
-
-```
-make SUBTARGET=tiny
+make SOURCES=src/mame/ehbc
 ```
 
 for a build including a small subset of supported systems.
@@ -52,12 +31,12 @@ Visual Studio builds are also possible, but you still need [build environment](h
 In order to generate solution and project files just run:
 
 ```
-make vs2019
+make vs2019 SOURCES=src/mame/ehbc
 ```
 or use this command to build it directly using msbuild
 
 ```
-make vs2019 MSBUILD=1
+make vs2019 MSBUILD=1 SOURCES=src/mame/ehbc
 ```
 
 
