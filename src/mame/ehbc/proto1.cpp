@@ -77,6 +77,8 @@ private:
 	required_ioport m_switches;
 
 	void mem_map(address_map &map);
+
+	void port_e9_w(offs_t offset, uint8_t data);
 };
 
 
@@ -84,9 +86,14 @@ private:
 //  ADDRESS MAPS
 //**************************************************************************
 
+void proto1_state::port_e9_w(offs_t offset, uint8_t data)
+{
+	printf("%c", data);
+}
+
 void proto1_state::mem_map(address_map &map)
 {
-	map(0x00000000, 0xFBFFFFFF).ram();
+	map(0x00000000, 0x000FFFFF).ram();
 
 	map(0xFD000000, 0xFDFFFFFF).rom().region("flash", 0);
 
@@ -94,6 +101,7 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFE000060, 0xFE000064).rw("kbdc", FUNC(kbdc8042_device::data_r), FUNC(kbdc8042_device::data_w));
 	map(0xFE000070, 0xFE000070).w(m_rtc, FUNC(mc146818_device::address_w));
 	map(0xFE000071, 0xFE000071).rw(m_rtc, FUNC(mc146818_device::data_r), FUNC(mc146818_device::data_w));
+	map(0xFE0000E9, 0xFE0000E9).w(FUNC(proto1_state::port_e9_w));
 	map(0xFE0001F0, 0xFE0001F7).rw(m_ide, FUNC(ide_controller_device::cs0_r), FUNC(ide_controller_device::cs0_w));
 	map(0xFE0003B0, 0xFE0003DF).m(m_vga, FUNC(cirrus_gd5428_vga_device::io_map));
 	map(0xFE0003F0, 0xFE0003F7).m(m_fdc, FUNC(pc8477b_device::map));
@@ -154,7 +162,7 @@ void proto1_state::proto1(machine_config &config)
 	M68030(config, m_maincpu, 25_MHz_XTAL);
 	m_maincpu->set_addrmap(AS_PROGRAM, &proto1_state::mem_map);
 
-	RAM(config, RAM_TAG)
+	RAM(config, m_ram)
 		.set_default_size("512K")
 		.set_extra_options("1M,2M,4M,8M,16M,32M,64M");
 
