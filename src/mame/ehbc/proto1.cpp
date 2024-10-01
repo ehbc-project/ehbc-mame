@@ -69,7 +69,7 @@ private:
 	required_device_array<mc68901_device, 2> m_mfp;
 	required_device<mc68681_device> m_duart;
 	required_device_array<rs232_port_device, 2> m_serial;
-	required_device<ide_controller_device> m_ide;
+	required_device<ide_controller_32_device> m_ide;
 	required_memory_region m_flash;
 	required_device<vga_device> m_vga;
 	required_device<pc8477b_device> m_fdc;
@@ -102,10 +102,10 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFE000070, 0xFE000070).w(m_rtc, FUNC(mc146818_device::address_w));
 	map(0xFE000071, 0xFE000071).rw(m_rtc, FUNC(mc146818_device::data_r), FUNC(mc146818_device::data_w));
 	map(0xFE0000E9, 0xFE0000E9).w(FUNC(proto1_state::port_e9_w));
-	map(0xFE0001F0, 0xFE0001F7).rw(m_ide, FUNC(ide_controller_device::cs0_r), FUNC(ide_controller_device::cs0_w));
+	map(0xFE0001F0, 0xFE0001F7).rw(m_ide, FUNC(ide_controller_32_device::cs0_r), FUNC(ide_controller_32_device::cs0_w));
 	map(0xFE0003B0, 0xFE0003DF).m(m_vga, FUNC(cirrus_gd5428_vga_device::io_map));
 	map(0xFE0003F0, 0xFE0003F7).m(m_fdc, FUNC(pc8477b_device::map));
-	map(0xFE0003F0, 0xFE0003F7).rw(m_ide, FUNC(ide_controller_device::cs1_r), FUNC(ide_controller_device::cs1_w));
+	map(0xFE0003F0, 0xFE0003F7).rw(m_ide, FUNC(ide_controller_32_device::cs1_r), FUNC(ide_controller_32_device::cs1_w));
 
 	// pc memory map (~16MiB)
 	map(0xFE0A0000, 0xFE0BFFFF).rw(m_vga, FUNC(cirrus_gd5428_vga_device::mem_r), FUNC(cirrus_gd5428_vga_device::mem_w));
@@ -178,8 +178,8 @@ void proto1_state::proto1(machine_config &config)
 	m_vga->set_screen("screen");
 	m_vga->set_vram_size(0x200000);
 
-	IDE_CONTROLLER(config, m_ide);
-	m_ide->options(ata_devices, "hdd", nullptr, false);
+	IDE_CONTROLLER_32(config, m_ide);
+	m_ide->options(ata_devices, "hdd", nullptr, true);
 
 	MC68681(config, m_duart, 16_MHz_XTAL / 2);
 	m_duart->a_tx_cb().set(m_serial[0], FUNC(rs232_port_device::write_txd));
