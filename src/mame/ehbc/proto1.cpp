@@ -25,6 +25,7 @@
 #include "machine/mc68901.h"
 #include "machine/mc68681.h"
 #include "machine/mc146818.h"
+#include "machine/hd63450.h"
 #include "machine/keyboard.h"
 #include "machine/8042kbdc.h"
 #include "machine/ram.h"
@@ -32,6 +33,7 @@
 #include "video/mc6845.h"
 #include "video/pc_vga.h"
 #include "video/pc_vga_cirrus.h"
+#include "sound/ad1848.h"
 #include "imagedev/floppy.h"
 
 namespace {
@@ -50,12 +52,15 @@ public:
 		m_ram(*this, RAM_TAG),
 		m_mfp(*this, "mfp%u", 0U),
 		m_duart(*this, "duart"),
+		m_dmac(*this, "dmac%u", 0U),
 		m_serial(*this, "serial%u", 0U),
 		m_ide(*this, "ide"),
 		m_flash(*this, "flash"),
 		m_vga(*this, "vga"),
 		m_fdc(*this, "fdc"),
 		m_rtc(*this, "rtc"),
+		m_kbdc(*this, "kbdc"),
+		m_snd(*this, "snd"),
 		m_switches(*this, "switches")
 	{ }
 
@@ -70,12 +75,15 @@ private:
 	required_device<ram_device> m_ram;
 	required_device_array<mc68901_device, 2> m_mfp;
 	required_device<mc68681_device> m_duart;
+	required_device_array<hd63450_device, 2> m_dmac;  // mc68440 in real machine
 	required_device_array<rs232_port_device, 2> m_serial;
 	required_device<ide_controller_32_device> m_ide;
 	required_memory_region m_flash;
 	required_device<vga_device> m_vga;
 	required_device<pc8477b_device> m_fdc;
 	required_device<mc146818_device> m_rtc;
+	required_device<kbdc8042_device> m_kbdc;
+	required_device<ad1848_device> m_snd;
 	required_ioport m_switches;
 
 	void mem_map(address_map &map);
@@ -106,6 +114,9 @@ private:
 	void irq_duart_handler(int state);
 	void irq_mfp0_handler(int state);
 	void irq_mfp1_handler(int state);
+	void irq_audio_handler(int state);
+	void irq_dmac0_handler(int state);
+	void irq_dmac1_handler(int state);
 };
 
 
@@ -126,8 +137,8 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFE0000E9, 0xFE0000E9).w(FUNC(proto1_state::port_e9_w));
 	map(0xFE0001F0, 0xFE0001F7).rw(m_ide, FUNC(ide_controller_32_device::cs0_r), FUNC(ide_controller_32_device::cs0_w));
 	map(0xFE0003B0, 0xFE0003DF).m(m_vga, FUNC(cirrus_gd5428_vga_device::io_map));
-	map(0xFE0003F0, 0xFE0003F7).m(m_fdc, FUNC(pc8477b_device::map));
 	map(0xFE0003F0, 0xFE0003F7).rw(m_ide, FUNC(ide_controller_32_device::cs1_r), FUNC(ide_controller_32_device::cs1_w));
+	map(0xFE0003F0, 0xFE0003F7).m(m_fdc, FUNC(pc8477b_device::map));
 
 	// pc memory map (~16MiB)
 	map(0xFE0A0000, 0xFE0BFFFF).rw(m_vga, FUNC(cirrus_gd5428_vga_device::mem_r), FUNC(cirrus_gd5428_vga_device::mem_w));
@@ -138,8 +149,9 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFF000100, 0xFF00010F).rw(m_mfp[0], FUNC(mc68901_device::read), FUNC(mc68901_device::write));
 	map(0xFF000110, 0xFF00011F).rw(m_mfp[1], FUNC(mc68901_device::read), FUNC(mc68901_device::write));
 	map(0xFF000200, 0xFF00020F).rw(m_duart, FUNC(mc68681_device::read), FUNC(mc68681_device::write));
-	map(0xFF000300, 0xFF0003FF);  // mc68440 #0
-	map(0xFF000400, 0xFF0004FF);  // mc68440 #1
+	map(0xFF000300, 0xFF0003FF).rw(m_dmac[0], FUNC(hd63450_device::read), FUNC(hd63450_device::write));
+	map(0xFF000400, 0xFF0004FF).rw(m_dmac[1], FUNC(hd63450_device::read), FUNC(hd63450_device::write));
+	map(0xFF000500, 0xFF000503).rw(m_snd, FUNC(ad1848_device::read), FUNC(ad1848_device::write));
 }
 
 //**************************************************************************
@@ -257,13 +269,32 @@ uint8_t proto1_state::scu_r(offs_t offset)
 			break;
 		case 16:  // ISR0-2
 			return (scu_isr >> 16) & 0xFF;
-		case 18:
+		case 17:
 			return (scu_isr >> 8) & 0xFF;
-		case 19:
+		case 18:
 			return scu_isr & 0xFF;
+		case 19:
+		case 20:
+		case 21:
+		case 22:
+		case 23:
+		case 24:
+		case 25: {
+			int irqline = offset - 18;
+			int cnt = 0;
+			for (int i = 0; i < 24; i++) {
+				if ((scu_icr[i] & 7) == irqline) {
+					scu_isr &= ~(1 << i);
+					cnt++;
+				}
+			}
+			m_maincpu->set_input_line(irqline, CLEAR_LINE);
+			return cnt;
+		}
 		default:
 			break;
 	}
+
 	return 0;
 }
 
@@ -283,7 +314,6 @@ void proto1_state::scu_isr_set(int irq, int state)
 	if (state) {
 		m_maincpu->set_input_line(scu_icr[irq] & 0x7, ASSERT_LINE);
 	}
-	printf("%d, %d, %d, %08X, %o\n", irq, state, scu_icr[irq], scu_isr, m_maincpu->input_state(2));
 }
 
 //**************************************************************************
@@ -312,6 +342,7 @@ void proto1_state::irq5_handler(int state)
 
 void proto1_state::irq6_handler(int state)
 {
+	printf("irq6, %d\n", state);
 	scu_isr_set(6, state);
 }
 void proto1_state::irq7_handler(int state)
@@ -369,6 +400,21 @@ void proto1_state::irq_mfp1_handler(int state)
 	scu_isr_set(18, state);
 }
 
+void proto1_state::irq_audio_handler(int state)
+{
+	scu_isr_set(19, state);
+}
+
+void proto1_state::irq_dmac0_handler(int state)
+{
+	scu_isr_set(20, state);
+}
+
+void proto1_state::irq_dmac1_handler(int state)
+{
+	scu_isr_set(21, state);
+}
+
 //**************************************************************************
 //  MACHINE DEFINTIONS
 //**************************************************************************
@@ -382,11 +428,21 @@ void proto1_state::proto1(machine_config &config)
 		.set_default_size("512K")
 		.set_extra_options("1M,2M,4M,8M,16M,32M,64M");
 
-	MC68901(config, m_mfp[0], 16_MHz_XTAL / 4);
+	MC68901(config, m_mfp[0], 4_MHz_XTAL);
 	m_mfp[0]->out_irq_cb().set(FUNC(proto1_state::irq_mfp0_handler));
 
-	MC68901(config, m_mfp[1], 16_MHz_XTAL / 4);
+	MC68901(config, m_mfp[1], 4_MHz_XTAL);
 	m_mfp[1]->out_irq_cb().set(FUNC(proto1_state::irq_mfp1_handler));
+
+	HD63450(config, m_dmac[0], 10_MHz_XTAL, "maincpu");
+	m_dmac[0]->irq_callback().set(FUNC(proto1_state::irq_dmac0_handler));
+	m_dmac[0]->dma_read<0>().set("fdc", FUNC(pc8477b_device::dma_r));
+	m_dmac[0]->dma_write<0>().set("fdc", FUNC(pc8477b_device::dma_w));
+	m_dmac[0]->dma_read<1>().set("ide", FUNC(ide_controller_32_device::read_dma));
+	m_dmac[0]->dma_write<1>().set("ide", FUNC(ide_controller_32_device::write_dma));
+
+	HD63450(config, m_dmac[1], 10_MHz_XTAL, "maincpu");
+	m_dmac[1]->irq_callback().set(FUNC(proto1_state::irq_dmac1_handler));
 
 	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_RASTER));
 	screen.set_raw(25.175_MHz_XTAL, 800, 0, 640, 525, 0, 480);
@@ -399,8 +455,9 @@ void proto1_state::proto1(machine_config &config)
 	IDE_CONTROLLER_32(config, m_ide);
 	m_ide->options(ata_devices, "hdd", nullptr, true);
 	m_ide->irq_handler().set(FUNC(proto1_state::irq15_handler));
+	m_ide->dmarq_handler().set(m_dmac[0], FUNC(hd63450_device::drq1_w));
 
-	MC68681(config, m_duart, 16_MHz_XTAL / 2);
+	MC68681(config, m_duart, 8_MHz_XTAL);
 	m_duart->irq_cb().set(FUNC(proto1_state::irq_duart_handler));
 	m_duart->a_tx_cb().set(m_serial[0], FUNC(rs232_port_device::write_txd));
 	m_duart->outport_cb().append(m_serial[0], FUNC(rs232_port_device::write_rts)).bit(0);
@@ -417,6 +474,19 @@ void proto1_state::proto1(machine_config &config)
 
 	PC8477B(config, m_fdc, 24_MHz_XTAL, pc8477b_device::mode_t::PS2);
 	m_fdc->intrq_wr_callback().set(FUNC(proto1_state::irq6_handler));
+	m_fdc->drq_wr_callback().set(m_dmac[0], FUNC(hd63450_device::drq0_w));
+
+	AD1848(config, m_snd, 24.576_MHz_XTAL);
+	m_snd->irq().set(FUNC(proto1_state::irq_audio_handler));
+
+	MC146818(config, m_rtc, 32.768_kHz_XTAL);
+	m_rtc->irq().set(FUNC(proto1_state::irq8_handler));
+
+	KBDC8042(config, m_kbdc);
+	m_kbdc->set_keyboard_type(kbdc8042_device::KBDC8042_STANDARD);
+	m_kbdc->set_keyboard_tag("at_keyboard");
+	m_kbdc->input_buffer_full_callback().set(FUNC(proto1_state::irq1_handler));
+	m_kbdc->input_buffer_full_mouse_callback().set(FUNC(proto1_state::irq12_handler));
 
 	floppy_connector &fdconn0(FLOPPY_CONNECTOR(config, "fdc:0"));
 	fdconn0.option_add("35hd", FLOPPY_35_HD);
@@ -433,14 +503,6 @@ void proto1_state::proto1(machine_config &config)
 	fdconn1.option_add("525dd", FLOPPY_525_DD);
 	fdconn1.set_default_option("35hd");
 	fdconn1.set_formats(floppy_image_device::default_pc_floppy_formats);
-
-	kbdc8042_device &kbdc(KBDC8042(config, "kbdc"));
-	kbdc.set_keyboard_type(kbdc8042_device::KBDC8042_STANDARD);
-	kbdc.set_keyboard_tag("at_keyboard");
-	kbdc.input_buffer_full_callback().set(FUNC(proto1_state::irq1_handler));
-	kbdc.input_buffer_full_mouse_callback().set(FUNC(proto1_state::irq12_handler));
-
-	MC146818(config, m_rtc, 32.768_kHz_XTAL);
 
 	// at_keyboard_device &at_keyb(AT_KEYB(config, "at_keyboard", pc_keyboard_device::KEYBOARD_TYPE::AT, 1));
 	// at_keyb.keypress().set("kbdc", FUNC(kbdc8042_device::keyboard_w));
