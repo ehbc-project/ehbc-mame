@@ -88,7 +88,10 @@ private:
 
 	void mem_map(address_map &map);
 
+	uint16_t scu_hptb_tdr[3];
+
 	uint8_t scu_ccr;
+	uint8_t scu_abr[8];
 	uint32_t scu_isr;
 	uint8_t scu_icr[24];
 	void scu_w(offs_t offset, uint8_t data);
@@ -131,7 +134,7 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFD000000, 0xFDFFFFFF).rom().region("flash", 0);
 
 	// pc i/o ports
-	map(0xFE000060, 0xFE000064).rw("kbdc", FUNC(kbdc8042_device::data_r), FUNC(kbdc8042_device::data_w));
+	map(0xFE000060, 0xFE000064).rw(m_kbdc, FUNC(kbdc8042_device::data_r), FUNC(kbdc8042_device::data_w));
 	map(0xFE000070, 0xFE000070).w(m_rtc, FUNC(mc146818_device::address_w));
 	map(0xFE000071, 0xFE000071).rw(m_rtc, FUNC(mc146818_device::data_r), FUNC(mc146818_device::data_w));
 	map(0xFE0000E9, 0xFE0000E9).w(FUNC(proto1_state::port_e9_w));
@@ -184,6 +187,7 @@ void proto1_state::machine_reset()
 {
 	scu_ccr = 0;
 	scu_isr = 0;
+	memset(scu_hptb_tdr, 0, sizeof(scu_hptb_tdr));
 	memset(scu_icr, 0, sizeof(scu_icr));
 	m_maincpu->space(0).write_dword(0, 0x00000000);
 	m_maincpu->space(0).write_dword(4, 0xFD000000);
@@ -218,6 +222,7 @@ void proto1_state::scu_w(offs_t offset, uint8_t data)
 		case 4:  // IDER0
 		case 5:  // IDER1
 		case 6:  // ISAR
+			break;
 		case 8:  // ABR0-7
 		case 9:
 		case 10:
@@ -226,6 +231,8 @@ void proto1_state::scu_w(offs_t offset, uint8_t data)
 		case 13:
 		case 14:
 		case 15:
+			
+			scu_abr[offset - 8] = data;
 			break;
 		case 16:  // ICR0-11
 		case 17:
@@ -241,6 +248,11 @@ void proto1_state::scu_w(offs_t offset, uint8_t data)
 		case 27:
 			scu_icr[((offset - 16) << 1)] = (data >> 4) & 0xF;
 			scu_icr[((offset - 16) << 1) + 1] = data & 0xF;
+			break;
+		case 28:
+		case 29:
+		case 30:
+		case 31:
 			break;
 		default:
 			break;
@@ -258,7 +270,8 @@ uint8_t proto1_state::scu_r(offs_t offset)
 		case 4:  // IDER0
 		case 5:  // IDER1
 		case 6:  // ISAR
-		case 8:  // ABR
+			break;
+		case 8:  // ABR0-7
 		case 9:
 		case 10:
 		case 11:
@@ -266,6 +279,7 @@ uint8_t proto1_state::scu_r(offs_t offset)
 		case 13:
 		case 14:
 		case 15:
+			return scu_abr[offset - 8];
 			break;
 		case 16:  // ISR0-2
 			return (scu_isr >> 16) & 0xFF;
@@ -342,7 +356,6 @@ void proto1_state::irq5_handler(int state)
 
 void proto1_state::irq6_handler(int state)
 {
-	printf("irq6, %d\n", state);
 	scu_isr_set(6, state);
 }
 void proto1_state::irq7_handler(int state)
@@ -435,13 +448,18 @@ void proto1_state::proto1(machine_config &config)
 	m_mfp[1]->out_irq_cb().set(FUNC(proto1_state::irq_mfp1_handler));
 
 	HD63450(config, m_dmac[0], 10_MHz_XTAL, "maincpu");
+	m_dmac[0]->set_clocks(attotime::from_nsec(120), attotime::from_nsec(120), attotime::from_nsec(120), attotime::from_nsec(120));
+	m_dmac[0]->set_burst_clocks(attotime::from_nsec(360), attotime::from_nsec(360), attotime::from_nsec(360), attotime::from_nsec(360));
 	m_dmac[0]->irq_callback().set(FUNC(proto1_state::irq_dmac0_handler));
+	m_dmac[0]->dma_end().set("fdc", FUNC(pc8477b_device::tc_line_w));
 	m_dmac[0]->dma_read<0>().set("fdc", FUNC(pc8477b_device::dma_r));
 	m_dmac[0]->dma_write<0>().set("fdc", FUNC(pc8477b_device::dma_w));
 	m_dmac[0]->dma_read<1>().set("ide", FUNC(ide_controller_32_device::read_dma));
 	m_dmac[0]->dma_write<1>().set("ide", FUNC(ide_controller_32_device::write_dma));
 
 	HD63450(config, m_dmac[1], 10_MHz_XTAL, "maincpu");
+	m_dmac[1]->set_clocks(attotime::from_nsec(120), attotime::from_nsec(120), attotime::from_nsec(120), attotime::from_nsec(120));
+	m_dmac[1]->set_burst_clocks(attotime::from_nsec(360), attotime::from_nsec(360), attotime::from_nsec(360), attotime::from_nsec(360));
 	m_dmac[1]->irq_callback().set(FUNC(proto1_state::irq_dmac1_handler));
 
 	screen_device &screen(SCREEN(config, "screen", SCREEN_TYPE_RASTER));
@@ -504,8 +522,8 @@ void proto1_state::proto1(machine_config &config)
 	fdconn1.set_default_option("35hd");
 	fdconn1.set_formats(floppy_image_device::default_pc_floppy_formats);
 
-	// at_keyboard_device &at_keyb(AT_KEYB(config, "at_keyboard", pc_keyboard_device::KEYBOARD_TYPE::AT, 1));
-	// at_keyb.keypress().set("kbdc", FUNC(kbdc8042_device::keyboard_w));
+	at_keyboard_device &at_keyb(AT_KEYB(config, "at_keyboard", pc_keyboard_device::KEYBOARD_TYPE::AT, 1));
+	at_keyb.keypress().set("kbdc", FUNC(kbdc8042_device::keyboard_w));
 }
 
 
@@ -528,5 +546,5 @@ ROM_END
 //  SYSTEM DRIVERS
 //**************************************************************************
 
-//    YEAR  NAME    PARENT  COMPAT  MACHINE INPUT   CLASS         INIT        COMPANY    FULLNAME       FLAGS
-COMP( 2024, proto1, 0,      0,      proto1, proto1, proto1_state, empty_init, "kms1212", "EHBC Proto1", MACHINE_IMPERFECT_GRAPHICS | MACHINE_NO_SOUND | MACHINE_SUPPORTS_SAVE )
+//   YEAR  NAME    PARENT  COMPAT  MACHINE INPUT   CLASS         INIT        COMPANY    FULLNAME       FLAGS
+COMP(2024, proto1, 0,      0,      proto1, proto1, proto1_state, empty_init, "kms1212", "EHBC Proto1", MACHINE_IMPERFECT_GRAPHICS | MACHINE_NO_SOUND | MACHINE_SUPPORTS_SAVE)
