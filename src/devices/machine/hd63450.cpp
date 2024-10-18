@@ -528,9 +528,7 @@ void hd63450_device::drq_w(int channel, int state)
 	if ((m_reg[channel].ocr & 2) && (state && !ostate))
 	{
 		// in cycle steal mode DRQ is supposed to be edge triggered
-		m_reg[channel].csr |= 0x08;
 		single_transfer(channel);
-		m_reg[channel].csr &= ~0x08;
 		m_timer[channel]->adjust(m_our_clock[channel], channel, m_our_clock[channel]);
 	}
 	else if (!state)
