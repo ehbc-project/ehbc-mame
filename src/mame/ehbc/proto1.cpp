@@ -98,6 +98,11 @@ private:
 	uint8_t scu_r(offs_t offset);
 	void scu_isr_set(int vec, int state);
 
+	uint32_t ide_read_cs0(offs_t offset, uint32_t mem_mask);
+	uint32_t ide_read_cs1(offs_t offset, uint32_t mem_mask);
+	void ide_write_cs0(offs_t offset, uint32_t data, uint32_t mem_mask);
+	void ide_write_cs1(offs_t offset, uint32_t data, uint32_t mem_mask);
+
 	void port_e9_w(offs_t offset, uint8_t data);
 
 	void irq1_handler(int state);
@@ -138,9 +143,9 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFE000070, 0xFE000070).w(m_rtc, FUNC(mc146818_device::address_w));
 	map(0xFE000071, 0xFE000071).rw(m_rtc, FUNC(mc146818_device::data_r), FUNC(mc146818_device::data_w));
 	map(0xFE0000E9, 0xFE0000E9).w(FUNC(proto1_state::port_e9_w));
-	map(0xFE0001F0, 0xFE0001F7).rw(m_ide, FUNC(ide_controller_32_device::cs0_r), FUNC(ide_controller_32_device::cs0_w));
+	map(0xFE0001F0, 0xFE0001F7).rw(FUNC(proto1_state::ide_read_cs0), FUNC(proto1_state::ide_write_cs0));
 	map(0xFE0003B0, 0xFE0003DF).m(m_vga, FUNC(cirrus_gd5428_vga_device::io_map));
-	map(0xFE0003F0, 0xFE0003F7).rw(m_ide, FUNC(ide_controller_32_device::cs1_r), FUNC(ide_controller_32_device::cs1_w));
+	map(0xFE0003F0, 0xFE0003F7).rw(FUNC(proto1_state::ide_read_cs1), FUNC(proto1_state::ide_write_cs1));
 	map(0xFE0003F0, 0xFE0003F7).m(m_fdc, FUNC(pc8477b_device::map));
 
 	// pc memory map (~16MiB)
@@ -330,6 +335,26 @@ void proto1_state::scu_isr_set(int irq, int state)
 	}
 }
 
+uint32_t proto1_state::ide_read_cs0(offs_t offset, uint32_t mem_mask)
+{
+	return swapendian_int32(m_ide->read_cs0(offset, swapendian_int32(mem_mask)));
+}
+
+uint32_t proto1_state::ide_read_cs1(offs_t offset, uint32_t mem_mask)
+{
+	return swapendian_int32(m_ide->read_cs1(offset, swapendian_int32(mem_mask)));
+}
+
+void proto1_state::ide_write_cs0(offs_t offset, uint32_t data, uint32_t mem_mask)
+{
+	m_ide->write_cs0(offset, swapendian_int32(data), swapendian_int32(mem_mask));
+}
+
+void proto1_state::ide_write_cs1(offs_t offset, uint32_t data, uint32_t mem_mask)
+{
+	m_ide->write_cs1(offset, swapendian_int32(data), swapendian_int32(mem_mask));
+}
+
 //**************************************************************************
 //  INTERRUPT HANDLERS
 //**************************************************************************
@@ -472,7 +497,7 @@ void proto1_state::proto1(machine_config &config)
 
 	IDE_CONTROLLER_32(config, m_ide);
 	m_ide->options(ata_devices, "hdd", nullptr, true);
-	m_ide->irq_handler().set(FUNC(proto1_state::irq15_handler));
+	m_ide->irq_handler().set(FUNC(proto1_state::irq14_handler));
 	m_ide->dmarq_handler().set(m_dmac[0], FUNC(hd63450_device::drq1_w));
 
 	MC68681(config, m_duart, 8_MHz_XTAL);
@@ -482,7 +507,7 @@ void proto1_state::proto1(machine_config &config)
 	m_duart->b_tx_cb().set(m_serial[1], FUNC(rs232_port_device::write_txd));
 	m_duart->outport_cb().append(m_serial[1], FUNC(rs232_port_device::write_rts)).bit(1);
 
-	RS232_PORT(config, m_serial[0], default_rs232_devices, "terminal");
+	RS232_PORT(config, m_serial[0], default_rs232_devices, nullptr);
 	m_serial[0]->rxd_handler().set(m_duart, FUNC(mc68681_device::rx_a_w));
 	m_serial[0]->cts_handler().set(m_duart, FUNC(mc68681_device::ip0_w));
 
