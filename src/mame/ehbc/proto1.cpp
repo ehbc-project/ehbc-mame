@@ -20,6 +20,8 @@
 #include "bus/isa/isa.h"
 #include "bus/isa/isa_cards.h"
 #include "bus/ata/hdd.h"
+#include "bus/pc_kbd/pc_kbdc.h"
+#include "bus/pc_kbd/keyboards.h"
 #include "cpu/m68000/m68030.h"
 #include "machine/idectrl.h"
 #include "machine/mc68901.h"
@@ -27,7 +29,8 @@
 #include "machine/mc146818.h"
 #include "machine/hd63450.h"
 #include "machine/keyboard.h"
-#include "machine/8042kbdc.h"
+#include "machine/at_keybc.h"
+#include "machine/pckeybrd.h"
 #include "machine/ram.h"
 #include "machine/upd765.h"
 #include "video/mc6845.h"
@@ -82,11 +85,12 @@ private:
 	required_device<vga_device> m_vga;
 	required_device<pc8477b_device> m_fdc;
 	required_device<mc146818_device> m_rtc;
-	required_device<kbdc8042_device> m_kbdc;
+	required_device<ps2_keyboard_controller_device> m_kbdc;
 	required_device<ad1848_device> m_snd;
 	required_ioport m_switches;
 
 	void mem_map(address_map &map);
+	void cpuspace_map(address_map &map);
 
 	uint16_t scu_hptb_tdr[3];
 
@@ -97,6 +101,7 @@ private:
 	void scu_w(offs_t offset, uint8_t data);
 	uint8_t scu_r(offs_t offset);
 	void scu_isr_set(int vec, int state);
+	uint8_t scu_irq_ack(offs_t offset);
 
 	uint32_t ide_read_cs0(offs_t offset, uint32_t mem_mask);
 	uint32_t ide_read_cs1(offs_t offset, uint32_t mem_mask);
@@ -139,7 +144,8 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFD000000, 0xFDFFFFFF).rom().region("flash", 0);
 
 	// pc i/o ports
-	map(0xFE000060, 0xFE000064).rw(m_kbdc, FUNC(kbdc8042_device::data_r), FUNC(kbdc8042_device::data_w));
+	map(0xFE000060, 0xFE000060).rw(m_kbdc, FUNC(ps2_keyboard_controller_device::data_r), FUNC(ps2_keyboard_controller_device::data_w));
+	map(0xFE000064, 0xFE000064).rw(m_kbdc, FUNC(ps2_keyboard_controller_device::status_r), FUNC(ps2_keyboard_controller_device::command_w));
 	map(0xFE000070, 0xFE000070).w(m_rtc, FUNC(mc146818_device::address_w));
 	map(0xFE000071, 0xFE000071).rw(m_rtc, FUNC(mc146818_device::data_r), FUNC(mc146818_device::data_w));
 	map(0xFE0000E9, 0xFE0000E9).w(FUNC(proto1_state::port_e9_w));
@@ -160,6 +166,12 @@ void proto1_state::mem_map(address_map &map)
 	map(0xFF000300, 0xFF0003FF).rw(m_dmac[0], FUNC(hd63450_device::read), FUNC(hd63450_device::write));
 	map(0xFF000400, 0xFF0004FF).rw(m_dmac[1], FUNC(hd63450_device::read), FUNC(hd63450_device::write));
 	map(0xFF000500, 0xFF000503).rw(m_snd, FUNC(ad1848_device::read), FUNC(ad1848_device::write));
+}
+
+void proto1_state::cpuspace_map(address_map &map)
+{
+	map(0xFFFFFFF0, 0xFFFFFFFF).m(m_maincpu, FUNC(m68030_device::autovectors_map));
+	map(0xFFFFFFF0, 0xFFFFFFFF).r(FUNC(proto1_state::scu_irq_ack));
 }
 
 //**************************************************************************
@@ -317,6 +329,17 @@ uint8_t proto1_state::scu_r(offs_t offset)
 	return 0;
 }
 
+uint8_t proto1_state::scu_irq_ack(offs_t offset)
+{
+	int level = offset >> 1;
+	for (int i = 0; i < 24; i++) {
+		if ((scu_icr[i] & 7) == level && (scu_isr & (1 << i))) {
+			return i + 64;
+		}
+	}
+	return m68030_device::autovector(level);
+}
+
 void proto1_state::scu_isr_set(int irq, int state)
 {
 	if (!(scu_icr[irq] & 0x08)) {  // irq disabled
@@ -383,6 +406,7 @@ void proto1_state::irq6_handler(int state)
 {
 	scu_isr_set(6, state);
 }
+
 void proto1_state::irq7_handler(int state)
 {
 	scu_isr_set(7, state);
@@ -461,6 +485,7 @@ void proto1_state::proto1(machine_config &config)
 {
 	M68030(config, m_maincpu, 8_MHz_XTAL);
 	m_maincpu->set_addrmap(AS_PROGRAM, &proto1_state::mem_map);
+	m_maincpu->set_addrmap(m68030_device::AS_CPU_SPACE, &proto1_state::cpuspace_map);
 
 	RAM(config, m_ram)
 		.set_default_size("512K")
@@ -525,11 +550,21 @@ void proto1_state::proto1(machine_config &config)
 	MC146818(config, m_rtc, 32.768_kHz_XTAL);
 	m_rtc->irq().set(FUNC(proto1_state::irq8_handler));
 
-	KBDC8042(config, m_kbdc);
-	m_kbdc->set_keyboard_type(kbdc8042_device::KBDC8042_STANDARD);
-	m_kbdc->set_keyboard_tag("at_keyboard");
-	m_kbdc->input_buffer_full_callback().set(FUNC(proto1_state::irq1_handler));
-	m_kbdc->input_buffer_full_mouse_callback().set(FUNC(proto1_state::irq12_handler));
+	pc_kbdc_device &kbd_conn(PC_KBDC(config, "kbd", pc_at_keyboards, STR_KBD_MICROSOFT_NATURAL));
+	kbd_conn.out_clock_cb().set(m_kbdc, FUNC(ps2_keyboard_controller_device::kbd_clk_w));
+	kbd_conn.out_data_cb().set(m_kbdc, FUNC(ps2_keyboard_controller_device::kbd_data_w));
+
+	pc_kbdc_device &aux_conn(PC_KBDC(config, "aux", ps2_mice, STR_HLE_PS2_MOUSE));
+	aux_conn.out_clock_cb().set(m_kbdc, FUNC(ps2_keyboard_controller_device::aux_clk_w));
+	aux_conn.out_data_cb().set(m_kbdc, FUNC(ps2_keyboard_controller_device::aux_data_w));
+
+	PS2_KEYBOARD_CONTROLLER(config, m_kbdc, 12_MHz_XTAL);
+	m_kbdc->kbd_clk().set(kbd_conn, FUNC(pc_kbdc_device::clock_write_from_mb));
+	m_kbdc->kbd_data().set(kbd_conn, FUNC(pc_kbdc_device::data_write_from_mb));
+	m_kbdc->kbd_irq().set(FUNC(proto1_state::irq1_handler));
+	m_kbdc->aux_clk().set(aux_conn, FUNC(pc_kbdc_device::clock_write_from_mb));
+	m_kbdc->aux_data().set(aux_conn, FUNC(pc_kbdc_device::data_write_from_mb));
+	m_kbdc->aux_irq().set(FUNC(proto1_state::irq12_handler));
 
 	floppy_connector &fdconn0(FLOPPY_CONNECTOR(config, "fdc:0"));
 	fdconn0.option_add("35hd", FLOPPY_35_HD);
@@ -546,9 +581,6 @@ void proto1_state::proto1(machine_config &config)
 	fdconn1.option_add("525dd", FLOPPY_525_DD);
 	fdconn1.set_default_option("35hd");
 	fdconn1.set_formats(floppy_image_device::default_pc_floppy_formats);
-
-	at_keyboard_device &at_keyb(AT_KEYB(config, "at_keyboard", pc_keyboard_device::KEYBOARD_TYPE::AT, 1));
-	at_keyb.keypress().set("kbdc", FUNC(kbdc8042_device::keyboard_w));
 }
 
 
@@ -572,4 +604,4 @@ ROM_END
 //**************************************************************************
 
 //   YEAR  NAME    PARENT  COMPAT  MACHINE INPUT   CLASS         INIT        COMPANY    FULLNAME       FLAGS
-COMP(2024, proto1, 0,      0,      proto1, proto1, proto1_state, empty_init, "kms1212", "EHBC Proto1", MACHINE_IMPERFECT_GRAPHICS)
+COMP(2024, proto1, 0,      0,      proto1, proto1, proto1_state, empty_init, "kms1212", "EHBC Proto1", MACHINE_IS_INCOMPLETE)
